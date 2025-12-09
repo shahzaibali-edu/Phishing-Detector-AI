@@ -4,17 +4,18 @@ import re
 import numpy as np
 from urllib.parse import urlparse
 
-# --- 1. INTERNAL HELPER FUNCTION (No separate file needed) ---
+# --- 1. INTERNAL HELPER FUNCTION ---
 def extract_features(url):
     url = str(url)
     parsed = urlparse(url)
     return [
-        len(url),
-        url.count('.'),
-        url.count('@'),
-        url.count('-'),
-        sum(c.isdigit() for c in url),
-        1 if parsed.scheme == 'https' else 0
+        len(url),                            # 1. Length
+        url.count('.'),                      # 2. Dot count
+        url.count('@'),                      # 3. @ symbol
+        url.count('-'),                      # 4. Dash count
+        sum(c.isdigit() for c in url),       # 5. Number count
+        1 if parsed.scheme == 'https' else 0, # 6. HTTPS check
+        1 if 'ip' in url.lower() else 0       # 7. IP Address check (THIS WAS MISSING)
     ]
 
 # --- 2. APP CONFIGURATION ---
@@ -27,7 +28,6 @@ st.write("### AI-Powered Phishing Email Detector")
 @st.cache_resource
 def load_brain():
     try:
-        # Load the models - Ensure these 3 files are in your GitHub repo!
         url_model = joblib.load('url_model.pkl')
         text_model = joblib.load('text_model.pkl')
         vectorizer = joblib.load('vectorizer.pkl')
