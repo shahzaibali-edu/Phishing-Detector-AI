@@ -5,20 +5,11 @@ import numpy as np
 import os
 from urllib.parse import urlparse
 
-# --- 0. DIAGNOSTIC MODE (Start Here) ---
+# --- 0. DIAGNOSTIC SETUP ---
 st.set_page_config(page_title="SentinelAI", page_icon="🛡️")
-st.title("🛡️ SentinelAI Diagnostics")
-
-# Print what the server sees
-st.write("### 📂 System File Check")
-try:
-    files = os.listdir('.')
-    st.write(f"**Current Files on Server:** `{files}`")
-except Exception as e:
-    st.error(f"Could not list files: {e}")
 
 # --- 1. CONFIGURATION & WHITELIST ---
-WHITELIST = ['zoom.us', 'google.com', 'microsoft.com', 'outlook.com', 'paypal.com', 'netflix.com']
+WHITELIST = ['zoom.us', 'google.com', 'microsoft.com', 'outlook.com', 'paypal.com', 'netflix.com', 'drive.google.com']
 
 # --- 2. INTELLIGENT HELPER FUNCTIONS ---
 def extract_features(url):
@@ -33,44 +24,46 @@ def extract_features(url):
 
 def get_link_reason(url):
     reasons = []
-    if len(url) > 75: reasons.append("URL is suspiciously long")
-    if url.count('-') > 3: reasons.append("Too many dashes (typosquatting)")
-    if url.count('@') > 0: reasons.append("Contains '@' (credential harvesting)")
-    if url.count('.') > 5: reasons.append("Too many subdomains")
-    if sum(c.isdigit() for c in url) > 5: reasons.append("High number of digits")
-    if 'ip' in url.lower(): reasons.append("IP address masking")
-    return ", ".join(reasons) if reasons else "Pattern matches known phishing links"
+    # 1. Rule-Based Triggers (The "Obvious" stuff)
+    if 'ip' in url.lower(): return "IP address masking (High Risk)"
+    if url.count('.') > 3: return "Too many subdomains (Suspicious)"
+    if url.count('-') > 3: return "Too many dashes (Typosquatting)"
+    if url.count('@') > 0: return "Contains '@' symbol"
+    
+    # 2. AI-Based Triggers (The "Subtle" stuff)
+    if len(url) > 75: reasons.append("Abnormally long URL")
+    if sum(c.isdigit() for c in url) > 5: reasons.append("High digit count")
+    
+    return ", ".join(reasons) if reasons else "AI Pattern Match"
 
 def get_text_reason(text):
     triggers = []
-    keywords = ['urgent', 'verify', 'suspended', 'immediately', 'close', 'bank', 'password']
+    keywords = ['urgent', 'verify', 'suspended', 'immediately', 'close', 'bank', 'password', 'unauthorized', 'lock']
     for k in keywords:
         if k in text.lower(): triggers.append(k)
-    return f"Contains panic words: {', '.join(triggers)}" if triggers else "Suspicious sentence structure detected"
+    return f"Contains panic words: {', '.join(triggers)}" if triggers else "Suspicious sentence structure"
 
-# --- 3. LOAD MODELS WITH DETAILED ERROR PRINTING ---
+# --- 3. LOAD MODELS ---
 @st.cache_resource
 def load_brain():
     try:
-        # ATTEMPT TO LOAD
         url_model = joblib.load('url_model.pkl')
         text_model = joblib.load('text_model.pkl')
         vectorizer = joblib.load('vectorizer.pkl')
         return url_model, text_model, vectorizer
     except Exception as e:
-        # PRINT THE REAL ERROR
-        st.error(f"❌ CRITICAL ERROR LOADING MODELS: {e}")
         return None, None, None
 
 url_model, text_model, vectorizer = load_brain()
 
-# --- 4. STOP IF BROKEN ---
+# --- 4. MAIN INTERFACE ---
+st.title("🛡️ SentinelAI")
+st.write("### AI-Powered Phishing Detector")
+
 if not url_model:
-    st.warning("⚠️ Application stopped. See the error message above.")
+    st.error("⚠️ Models not found. Please upload .pkl files to GitHub.")
     st.stop()
 
-# --- 5. MAIN INTERFACE ---
-st.write("### AI-Powered Phishing Detector")
 email_text = st.text_area("Paste Email Content:", height=200)
 
 if st.button("Analyze Email"):
@@ -94,19 +87,31 @@ if st.button("Analyze Email"):
                 st.success(f"✅ Content Safe ({100-text_prob:.1f}%)")
                 st.write("**Why?** Language appears normal.")
 
-        # --- B. ANALYZE LINKS ---
+        # --- B. ANALYZE LINKS (HYBRID ENGINE) ---
         urls = re.findall(r'(https?://\S+)', email_text)
         bad_links = []
         safe_links = []
         
         for url in urls:
             domain = urlparse(url).netloc
+            
+            # 1. Whitelist Check (Pass safe stuff immediately)
             if any(trusted in domain for trusted in WHITELIST):
-                safe_links.append((url, "Trusted Domain (Whitelisted)"))
+                safe_links.append((url, "Trusted Domain"))
                 continue
 
+            # 2. Rule-Based Check (Catch obviously bad stuff)
+            # If it has an IP, >3 dots, or >3 dashes, FAIL IT IMMEDIATELY.
+            manual_fail = False
+            if 'ip' in url.lower() or url.count('.') > 3 or url.count('-') > 3:
+                manual_fail = True
+
+            # 3. AI Check (Catch the rest)
             feats = np.array([extract_features(url)])
-            if url_model.predict(feats)[0] == 1:
+            ai_fail = url_model.predict(feats)[0] == 1
+
+            # Final Verdict: If EITHER the Rules OR the AI say it's bad, it's bad.
+            if manual_fail or ai_fail:
                 bad_links.append((url, get_link_reason(url)))
             else:
                 safe_links.append((url, "AI Analysis Passed"))
@@ -123,3 +128,6 @@ if st.button("Analyze Email"):
                 with st.expander("View Safe Links"):
                     for url, reason in safe_links:
                         st.write(f"🟢 {url}")
+                        st.caption(f"Reason: {reason}")
+            else:
+                st.info("No links found.")
