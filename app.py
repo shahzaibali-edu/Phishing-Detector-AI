@@ -1,106 +1,93 @@
 import streamlit as st
 import joblib
 import re
-from feature_extraction import extract_features  # Importing your helper function
+import numpy as np
+from urllib.parse import urlparse
 
-# --- CONFIGURATION ---
-st.set_page_config(
-    page_title="SentinelAI - Phishing Detector",
-    page_icon="🛡️",
-    layout="centered"
-)
+# --- 1. INTERNAL HELPER FUNCTION (No separate file needed) ---
+def extract_features(url):
+    url = str(url)
+    parsed = urlparse(url)
+    return [
+        len(url),
+        url.count('.'),
+        url.count('@'),
+        url.count('-'),
+        sum(c.isdigit() for c in url),
+        1 if parsed.scheme == 'https' else 0
+    ]
 
-# --- LOAD MODELS ---
-# We use @st.cache_resource so it doesn't reload the models every time you click a button
+# --- 2. APP CONFIGURATION ---
+st.set_page_config(page_title="SentinelAI", page_icon="🛡️")
+
+st.title("🛡️ SentinelAI")
+st.write("### AI-Powered Phishing Email Detector")
+
+# --- 3. LOAD MODELS WITH FALLBACK ---
 @st.cache_resource
-def load_models():
+def load_brain():
     try:
+        # Load the models - Ensure these 3 files are in your GitHub repo!
         url_model = joblib.load('url_model.pkl')
         text_model = joblib.load('text_model.pkl')
         vectorizer = joblib.load('vectorizer.pkl')
         return url_model, text_model, vectorizer
-    except FileNotFoundError:
-        st.error("❌ Models not found! Please run the training scripts first.")
+    except Exception as e:
+        st.error(f"❌ Error loading models: {e}")
         return None, None, None
 
-url_model, text_model, vectorizer = load_models()
+url_model, text_model, vectorizer = load_brain()
 
-# --- UI DESIGN ---
-st.title("🛡️ SentinelAI")
-st.markdown("""
-    **AI-Powered Phishing Email & Malicious Link Detector** *Paste an email below to scan for social engineering and malicious links.*
-""")
-st.divider()
+# --- 4. CHECK IF MODELS LOADED ---
+if not url_model:
+    st.warning("⚠️ Models not found. Please ensure 'url_model.pkl', 'text_model.pkl', and 'vectorizer.pkl' are uploaded to GitHub.")
+    st.stop() 
 
-# Input Area
-email_text = st.text_area("📧 Email Content", height=200, placeholder="Paste the suspicious email text here...")
+# --- 5. THE INTERFACE ---
+email_text = st.text_area("Paste Email Content:", height=200)
 
-if st.button("🔍 Analyze Email", type="primary"):
+if st.button("Analyze Email"):
     if not email_text:
-        st.warning("Please paste some text first.")
+        st.warning("Please paste text first.")
     else:
-        st.markdown("### 📊 Analysis Report")
-        
-        # --- 1. TEXT ANALYSIS (Engine B) ---
-        # Convert text to numbers
-        text_features = vectorizer.transform([email_text])
-        # Predict
-        text_prediction = text_model.predict(text_features)[0]
-        text_prob = text_model.predict_proba(text_features)[0][1] * 100
-
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Content Analysis")
-            if text_prediction == 1:
-                st.error(f"⚠️ **PHISHING DETECTED**")
-                st.write(f"Confidence: **{text_prob:.1f}%**")
-                st.info("The language used matches known scam patterns (urgency, fear, or financial requests).")
-            else:
-                st.success(f"✅ **Legitimate**")
-                st.write(f"Confidence: **{100 - text_prob:.1f}%**")
-                st.write("The email content appears normal.")
-
-        # --- 2. LINK ANALYSIS (Engine A) ---
-        # Find all links in the text
-        urls = re.findall(r'(https?://\S+)', email_text)
-        
-        malicious_links = []
-        safe_links = []
-
-        if urls:
+        # A. Analyze Text
+        try:
+            text_features = vectorizer.transform([email_text])
+            text_verdict = text_model.predict(text_features)[0]
+            text_prob = text_model.predict_proba(text_features)[0][1] * 100
+            
+            # B. Analyze Links
+            urls = re.findall(r'(https?://\S+)', email_text)
+            bad_links = []
+            
             for url in urls:
-                # Extract features using your helper function
-                features = extract_features(url)
-                # Predict
-                pred = url_model.predict([features])[0]
-                
-                if pred == 1:
-                    malicious_links.append(url)
+                feats = extract_features(url)
+                # Reshape for single prediction
+                feats_array = np.array([feats]) 
+                if url_model.predict(feats_array)[0] == 1:
+                    bad_links.append(url)
+
+            # C. Show Results
+            st.divider()
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("Text Analysis")
+                if text_verdict == 1:
+                    st.error(f"❌ Phishing Content ({text_prob:.1f}%)")
+                    st.write("Suspicious language detected.")
                 else:
-                    safe_links.append(url)
+                    st.success(f"✅ Safe Content ({100-text_prob:.1f}%)")
+                    st.write("Language looks normal.")
 
-        with col2:
-            st.subheader("Link Analysis")
-            if not urls:
-                st.write("No links found in this email.")
-            else:
-                if malicious_links:
-                    st.error(f"Found {len(malicious_links)} Malicious Links!")
-                    for link in malicious_links:
-                        st.write(f"🔴 `{link}`")
-                
-                if safe_links:
-                    st.success(f"Found {len(safe_links)} Safe Links")
-                    with st.expander("View Safe Links"):
-                        for link in safe_links:
-                            st.write(f"🟢 {link}")
-
-        # --- 3. FINAL RECOMMENDATION ---
-        st.divider()
-        st.subheader("🛡️ Recommendation")
-        
-        if text_prediction == 1 or malicious_links:
-            st.error("🚫 **DO NOT REPLY OR CLICK LINKS.** This email is highly likely to be a phishing attack.")
-        else:
-            st.success("✅ **SAFE TO PROCEED.** No obvious threats were detected.")
+            with col2:
+                st.subheader("Link Analysis")
+                if bad_links:
+                    st.error(f"❌ {len(bad_links)} Malicious Links")
+                    for l in bad_links: st.code(l)
+                elif urls:
+                    st.success(f"✅ {len(urls)} Links Scanned - All Safe")
+                else:
+                    st.info("No links found.")
+        except Exception as e:
+            st.error(f"An error occurred during analysis: {e}")
