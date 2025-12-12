@@ -22,8 +22,32 @@ def extract_features(url):
         1 if 'ip' in url.lower() else 0
     ]
 
-# --- 3. THE BACKUP ENGINE (RULE-BASED) ---
-# This runs if the AI models are missing. It mimics the AI's logic.
+# --- 3. INPUT VALIDATION LAYER (NEW) ---
+def is_valid_email_text(text):
+    """
+    Checks if the input text looks like a real email.
+    Returns: (bool, reason)
+    """
+    text = text.strip()
+    
+    # Check 1: Too Short
+    if len(text) < 20:
+        return False, "Input is too short to be a valid email."
+    
+    # Check 2: Too Few Words
+    words = text.split()
+    if len(words) < 3:
+        return False, "Contains too few words. Please paste the full email body."
+    
+    # Check 3: Gibberish Detector (Unique character ratio)
+    # Real language uses repetitive letters (e, a, i). Gibberish "lkjsdflkjsdf" has weird patterns.
+    # This is a simple heuristic: if one "word" is 50 chars long, it's gibberish.
+    if any(len(w) > 40 and 'http' not in w for w in words):
+        return False, "Detected gibberish or non-human text."
+
+    return True, ""
+
+# --- 4. THE BACKUP ENGINE (RULE-BASED) ---
 def backup_text_scan(text):
     keywords = ['urgent', 'verify', 'suspended', 'immediately', 'close', 'bank', 'password', 'unauthorized', 'lock', 'action required']
     found = [k for k in keywords if k in text.lower()]
@@ -43,7 +67,7 @@ def backup_url_scan(url):
         return 1, ", ".join(reasons)
     return 0, "Clean URL structure"
 
-# --- 4. LOAD MODELS (WITH SAFE FAILOVER) ---
+# --- 5. LOAD MODELS ---
 @st.cache_resource
 def load_brain():
     try:
@@ -52,12 +76,11 @@ def load_brain():
         vectorizer = joblib.load('vectorizer.pkl')
         return url_model, text_model, vectorizer
     except Exception:
-        # If files are missing, return NONE. The app will handle this gracefully.
         return None, None, None
 
 url_model, text_model, vectorizer = load_brain()
 
-# --- 5. MAIN INTERFACE ---
+# --- 6. MAIN INTERFACE ---
 st.title("🛡️ SentinelAI")
 st.write("### AI-Powered Phishing Detector")
 
@@ -67,24 +90,26 @@ if url_model:
 else:
     st.warning("🟡 System Status: **BACKUP MODE** (Running Rule-Based Logic)")
 
-email_text = st.text_area("Paste Email Content:", height=200)
+email_text = st.text_area("Paste Email Content:", height=200, placeholder="Paste the full email body here...")
 
 if st.button("Analyze Email"):
-    if not email_text:
-        st.warning("Please paste text first.")
+    # --- STEP 0: SANITY CHECK ---
+    is_valid, error_msg = is_valid_email_text(email_text)
+    
+    if not is_valid:
+        st.warning(f"⚠️ **Invalid Input:** {error_msg}")
     else:
+        # Proceed with Analysis only if valid
         st.divider()
         col1, col2 = st.columns(2)
 
         # --- A. ANALYZE TEXT ---
         if text_model:
-            # Use AI if available
             text_features = vectorizer.transform([email_text])
             is_phishing = text_model.predict(text_features)[0]
             confidence = text_model.predict_proba(text_features)[0][1] * 100
             reason = "Suspicious language patterns detected" if is_phishing else "Language appears normal"
         else:
-            # Use Backup if AI is missing
             is_phishing, reason = backup_text_scan(email_text)
             confidence = 95.0 if is_phishing else 5.0
 
@@ -110,9 +135,8 @@ if st.button("Analyze Email"):
                 safe_links.append((url, "Trusted Domain"))
                 continue
 
-            # 2. Analysis (AI or Backup)
+            # 2. Analysis
             if url_model:
-                # Hybrid: Rules First, then AI
                 manual_fail = False
                 if 'ip' in url.lower() or url.count('.') > 3 or url.count('-') > 3:
                     manual_fail = True
@@ -126,7 +150,6 @@ if st.button("Analyze Email"):
                 else:
                     safe_links.append((url, "AI Analysis Passed"))
             else:
-                # Backup Mode
                 is_bad, reason = backup_url_scan(url)
                 if is_bad:
                     bad_links.append((url, reason))
