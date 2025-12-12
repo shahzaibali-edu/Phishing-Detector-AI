@@ -34,9 +34,10 @@ def is_valid_email_text(text):
         return False, "Empty input, Paste something to analyze."
     if len(text) < 20:
         return False, "Input is too short to be a valid email."
+    words = text.split()
     if any(len(w) > 40 and 'http' not in w for w in words):
         return False, "Detected gibberish or non-human text."
-    words = text.split()
+    
     if len(words) < 3:
         return False, "Contains too few words. Please paste the full email body."
     
@@ -181,4 +182,5 @@ if st.button("Analyze Email"):
                         st.caption(f"Reason: {reason}")
             else:
                 st.info("No links found.")
+
 
