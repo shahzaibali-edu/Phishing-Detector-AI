@@ -22,29 +22,16 @@ def extract_features(url):
         1 if 'ip' in url.lower() else 0
     ]
 
-# --- 3. INPUT VALIDATION LAYER (NEW) ---
+# --- 3. INPUT VALIDATION LAYER ---
 def is_valid_email_text(text):
-    """
-    Checks if the input text looks like a real email.
-    Returns: (bool, reason)
-    """
     text = text.strip()
-    
-    # Check 1: Too Short
     if len(text) < 20:
         return False, "Input is too short to be a valid email."
-    
-    # Check 2: Too Few Words
     words = text.split()
     if len(words) < 3:
         return False, "Contains too few words. Please paste the full email body."
-    
-    # Check 3: Gibberish Detector (Unique character ratio)
-    # Real language uses repetitive letters (e, a, i). Gibberish "lkjsdflkjsdf" has weird patterns.
-    # This is a simple heuristic: if one "word" is 50 chars long, it's gibberish.
     if any(len(w) > 40 and 'http' not in w for w in words):
         return False, "Detected gibberish or non-human text."
-
     return True, ""
 
 # --- 4. THE BACKUP ENGINE (RULE-BASED) ---
@@ -99,7 +86,6 @@ if st.button("Analyze Email"):
     if not is_valid:
         st.warning(f"⚠️ **Invalid Input:** {error_msg}")
     else:
-        # Proceed with Analysis only if valid
         st.divider()
         col1, col2 = st.columns(2)
 
@@ -122,7 +108,7 @@ if st.button("Analyze Email"):
                 st.success(f"✅ Content Safe ({100-confidence:.1f}%)")
                 st.write(f"**Why?** {reason}")
 
-        # --- B. ANALYZE LINKS ---
+        # --- B. ANALYZE LINKS (FIXED REASON LOGIC) ---
         urls = re.findall(r'(https?://\S+)', email_text)
         bad_links = []
         safe_links = []
@@ -138,15 +124,29 @@ if st.button("Analyze Email"):
             # 2. Analysis
             if url_model:
                 manual_fail = False
-                if 'ip' in url.lower() or url.count('.') > 3 or url.count('-') > 3:
+                reason = "AI Pattern Match (Suspicious Structure)" # Default AI reason
+
+                # Check specific rules to give a BETTER reason
+                if 'ip' in url.lower():
                     manual_fail = True
-                    reason = "Suspicious Pattern (Rules)"
+                    reason = "IP Address Masking (Rule Violation)"
+                elif url.count('.') > 3:
+                    manual_fail = True
+                    reason = "Too many subdomains (Rule Violation)"
+                elif url.count('-') > 3:
+                    manual_fail = True
+                    reason = "Too many dashes / Typosquatting (Rule Violation)"
+                elif url.count('@') > 0:
+                    manual_fail = True
+                    reason = "Contains '@' symbol (Rule Violation)"
                 
+                # Run AI Check
                 feats = np.array([extract_features(url)])
                 ai_fail = url_model.predict(feats)[0] == 1
                 
+                # If EITHER failed, append the SPECIFIC reason
                 if manual_fail or ai_fail:
-                    bad_links.append((url, "Malicious Link Detected"))
+                    bad_links.append((url, reason)) 
                 else:
                     safe_links.append((url, "AI Analysis Passed"))
             else:
@@ -162,7 +162,7 @@ if st.button("Analyze Email"):
                 st.error(f"❌ Found {len(bad_links)} Malicious Links")
                 for url, reason in bad_links:
                     st.code(url)
-                    st.caption(f"⚠️ {reason}")
+                    st.caption(f"⚠️ {reason}") # Now this will show specific reasons!
             elif safe_links:
                 st.success(f"✅ {len(safe_links)} Links Scanned - All Safe")
                 with st.expander("View Safe Links"):
