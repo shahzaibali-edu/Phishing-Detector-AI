@@ -15,11 +15,16 @@ WHITELIST = ['zoom.us', 'google.com', 'microsoft.com', 'outlook.com', 'paypal.co
 def extract_features(url):
     url = str(url)
     parsed = urlparse(url)
+    
+    # Improved IP check for the feature extractor too
+    ip_pattern = r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+    has_ip = 1 if re.search(ip_pattern, url) else 0
+    
     return [
         len(url), url.count('.'), url.count('@'), url.count('-'),
         sum(c.isdigit() for c in url),
         1 if parsed.scheme == 'https' else 0,
-        1 if 'ip' in url.lower() else 0
+        has_ip 
     ]
 
 # --- 3. INPUT VALIDATION LAYER ---
@@ -44,7 +49,8 @@ def backup_text_scan(text):
 
 def backup_url_scan(url):
     reasons = []
-    if 'ip' in url.lower(): reasons.append("IP address masking")
+    # FIX: Use Regex for IP detection here too
+    if re.search(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', url): reasons.append("IP address masking")
     if url.count('.') > 3: reasons.append("Too many subdomains")
     if url.count('-') > 3: reasons.append("Too many dashes")
     if url.count('@') > 0: reasons.append("Contains '@' symbol")
@@ -108,7 +114,7 @@ if st.button("Analyze Email"):
                 st.success(f"✅ Content Safe ({100-confidence:.1f}%)")
                 st.write(f"**Why?** {reason}")
 
-        # --- B. ANALYZE LINKS (FIXED REASON LOGIC) ---
+        # --- B. ANALYZE LINKS (FIXED IP DETECTION) ---
         urls = re.findall(r'(https?://\S+)', email_text)
         bad_links = []
         safe_links = []
@@ -127,7 +133,8 @@ if st.button("Analyze Email"):
                 reason = "AI Pattern Match (Suspicious Structure)" # Default AI reason
 
                 # Check specific rules to give a BETTER reason
-                if 'ip' in url.lower():
+                # FIX: Use Regex to find REAL IP addresses
+                if re.search(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', url):
                     manual_fail = True
                     reason = "IP Address Masking (Rule Violation)"
                 elif url.count('.') > 3:
